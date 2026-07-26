@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+
+# Pruebas y calidad
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- DATOS Y SECRETOS: nunca al repositorio ---
+data/
+logs/
+artifacts/
+*.db
+*.db-wal
+*.db-shm
+*.parquet
+*.joblib
+.env
+*.pem
+*.key
+
+# Configuracion local (la de por defecto SI se versiona)
+configs/local.yaml
+configs/production.yaml
+
+# Sistema
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
