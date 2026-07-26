@@ -1,0 +1,36 @@
+# --- nucleo ---
+numpy>=1.26
+pandas>=2.2
+scipy>=1.11
+pyarrow>=15.0          # cache Parquet
+PyYAML>=6.0
+joblib>=1.3
+
+# --- machine learning ---
+scikit-learn>=1.4
+
+# --- optimizacion ---
+optuna>=3.5            # refinamiento bayesiano
+deap>=1.4              # utilidades de algoritmos geneticos
+
+# --- datos y ejecucion ---
+yfinance>=0.2.40       # futuros/spot de oro (GC=F, XAUUSD=X)
+ccxt>=4.2              # 100+ exchanges; PAXG/USDT como proxy de oro
+requests>=2.31
+
+# --- pruebas ---
+pytest>=8.0
+
+# =====================================================================
+# OPCIONALES (instalar solo si se necesitan)
+# =====================================================================
+# Redes neuronales (ml.model_type: torch_mlp).
+# El boosting de gradiente suele rendir igual o mejor en datos tabulares
+# de este tamano, asi que torch no es necesario para operar.
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#
+# Ejecucion real de XAU/USD via MetaTrader 5 (SOLO WINDOWS):
+#   pip install MetaTrader5
+#
+# Backtesting cruzado con otros motores (verificacion independiente):
+#   pip install backtrader vectorbt

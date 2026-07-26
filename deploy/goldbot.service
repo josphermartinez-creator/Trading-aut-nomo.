@@ -1,0 +1,54 @@
+# =====================================================================
+# Unidad systemd para GoldBot (instalacion nativa, sin Docker)
+#
+#   sudo cp deploy/goldbot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now goldbot
+#   sudo journalctl -u goldbot -f
+# =====================================================================
+
+[Unit]
+Description=GoldBot - bot autonomo de trading de oro (M5)
+Documentation=https://github.com/josphermartinez-creator/Trading-aut-nomo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=goldbot
+Group=goldbot
+WorkingDirectory=/opt/goldbot
+
+Environment="PYTHONUNBUFFERED=1"
+Environment="TZ=UTC"
+EnvironmentFile=/opt/goldbot/.env
+
+ExecStart=/opt/goldbot/.venv/bin/goldbot schedule
+
+# Reinicio automatico: un bot de trading no puede quedarse caido de noche.
+Restart=always
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Parada ordenada: da tiempo a cerrar la conexion con el broker.
+KillSignal=SIGTERM
+TimeoutStopSec=120
+
+# --- Aislamiento ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/goldbot/data /opt/goldbot/logs /opt/goldbot/artifacts
+
+# --- Limites de recursos (la evolucion consume CPU) ---
+CPUQuota=200%
+MemoryMax=3G
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=goldbot
+
+[Install]
+WantedBy=multi-user.target

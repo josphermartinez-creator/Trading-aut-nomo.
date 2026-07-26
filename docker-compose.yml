@@ -1,0 +1,58 @@
+# =====================================================================
+# GoldBot - despliegue en VPS (DigitalOcean, AWS, Hetzner...)
+#
+#   cp .env.example .env    # y rellena las credenciales
+#   docker compose up -d
+#   docker compose logs -f
+# =====================================================================
+
+services:
+  goldbot:
+    build: .
+    image: goldbot:1.0.0
+    container_name: goldbot
+    restart: unless-stopped
+
+    # 'schedule' ejecuta el trading en vivo y el ciclo diario de
+    # aprendizaje en un unico proceso.
+    command: ["schedule"]
+
+    environment:
+      TZ: UTC
+      GOLDBOT_LOG_LEVEL: ${GOLDBOT_LOG_LEVEL:-INFO}
+      GOLDBOT_MODE: ${GOLDBOT_MODE:-paper}
+      # Salvaguarda: por defecto NUNCA se envian ordenes reales.
+      GOLDBOT_DRY_RUN: ${GOLDBOT_DRY_RUN:-true}
+      GOLDBOT_API_KEY: ${GOLDBOT_API_KEY:-}
+      GOLDBOT_API_SECRET: ${GOLDBOT_API_SECRET:-}
+      GOLDBOT_INITIAL_BALANCE: ${GOLDBOT_INITIAL_BALANCE:-10000}
+
+    volumes:
+      # El historico y la base de datos deben sobrevivir al contenedor:
+      # son el aprendizaje acumulado del bot.
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./artifacts:/app/artifacts
+      - ./configs:/app/configs:ro
+
+    # La evolucion es intensiva en CPU; sin limites puede ahogar al VPS.
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 3G
+        reservations:
+          memory: 1G
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "from goldbot.config import load_config; load_config()"]
+      interval: 5m
+      timeout: 30s
+      retries: 3
+      start_period: 2m

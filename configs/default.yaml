@@ -1,0 +1,174 @@
+# =====================================================================
+# GoldBot - configuracion por defecto
+# =====================================================================
+# Las credenciales NUNCA van aqui. Se leen de variables de entorno:
+#   GOLDBOT_API_KEY, GOLDBOT_API_SECRET
+#   GOLDBOT_MT5_LOGIN, GOLDBOT_MT5_PASSWORD, GOLDBOT_MT5_SERVER
+# =====================================================================
+
+log_level: INFO
+log_file: logs/goldbot.log
+db_path: data/goldbot.db
+artifacts_dir: artifacts
+
+# ---------------------------------------------------------------------
+# Datos
+# ---------------------------------------------------------------------
+data:
+  symbol: XAUUSD
+  timeframe: 5m
+  timeframe_minutes: 5
+
+  # Orden de preferencia. El primero que devuelva velas gana.
+  #   yfinance -> futuros COMEX GC=F (gratis, pero solo ~60 dias de M5)
+  #   ccxt     -> PAXG/USDT (oro tokenizado, permite paginar anos de M5)
+  #   csv      -> export propio de MetaTrader 5 (la mejor calidad)
+  providers: [yfinance, ccxt, csv]
+
+  yfinance_symbol: "GC=F"
+  yfinance_fallback: "XAUUSD=X"
+  ccxt_exchange: binance
+  ccxt_symbol: "PAXG/USDT"
+  csv_path: data/XAUUSD_M5.csv
+
+  cache_dir: data/cache
+  history_days: 720          # objetivo; el cache lo va acumulando dia a dia
+  min_bars_required: 5000    # por debajo no se entrena con datos reales
+  max_gap_minutes: 120
+
+# ---------------------------------------------------------------------
+# Costes de transaccion (¡ajustalos a los de TU broker!)
+# ---------------------------------------------------------------------
+# Son la diferencia entre un backtest bonito y uno honesto. En M5 el
+# movimiento esperado es del orden del spread: si te quedas corto aqui,
+# toda estrategia parecera rentable.
+costs:
+  spread_points: 0.25        # USD por onza
+  commission_per_lot: 7.0    # USD ida y vuelta por lote estandar
+  slippage_points: 0.10
+  contract_size: 100.0       # onzas por lote
+  swap_long: -0.5
+  swap_short: 0.2
+
+# ---------------------------------------------------------------------
+# Riesgo. Estos limites no se negocian en tiempo de ejecucion.
+# ---------------------------------------------------------------------
+risk:
+  initial_balance: 10000.0
+  risk_per_trade: 0.005      # 0.5% del capital por operacion
+  max_risk_per_trade: 0.02
+  max_concurrent_positions: 1
+  max_daily_loss_pct: 0.03   # el bot corta el dia al -3%
+  max_drawdown_pct: 0.15     # el bot se apaga al -15%
+  max_lot_size: 5.0
+  min_lot_size: 0.01
+  lot_step: 0.01
+  use_kelly: true
+  kelly_fraction: 0.25       # Kelly fraccional; nunca Kelly completo
+  atr_stop_multiplier: 2.0
+  atr_target_multiplier: 3.0
+  max_trades_per_day: 20
+  cooldown_bars_after_loss: 3
+
+# ---------------------------------------------------------------------
+# Algoritmo genetico (el que inventa las estrategias)
+# ---------------------------------------------------------------------
+evolution:
+  population_size: 120
+  generations: 40
+  crossover_prob: 0.6
+  mutation_prob: 0.35
+  tournament_size: 4
+  elitism: 6
+  hall_of_fame: 25
+  max_conditions: 4          # complejidad maxima de una regla
+  random_seed: 42            # null = no determinista
+  n_jobs: -1
+  early_stop_generations: 12
+  min_trades: 40             # menos operaciones = muestra sin valor
+
+# ---------------------------------------------------------------------
+# Refinamiento bayesiano
+# ---------------------------------------------------------------------
+optuna:
+  enabled: true
+  n_trials: 80
+  timeout_seconds: 900
+  n_startup_trials: 15
+  pruner_warmup_steps: 5
+
+# ---------------------------------------------------------------------
+# Meta-etiquetado (filtro de calidad de senales)
+# ---------------------------------------------------------------------
+ml:
+  enabled: true
+  model_type: gradient_boosting   # gradient_boosting | random_forest | logistic | mlp | torch_mlp
+  lookahead_bars: 24              # 2 horas en M5
+  profit_take_atr: 1.5
+  stop_loss_atr: 1.0
+  min_probability: 0.55
+  train_test_split: 0.75
+  purge_bars: 24                  # purga entre train y test
+  embargo_bars: 12
+  max_features: 40
+  retrain_every_days: 1
+  min_auc: 0.52                   # por debajo, el modelo no se usa
+
+# ---------------------------------------------------------------------
+# Validacion
+# ---------------------------------------------------------------------
+backtest:
+  walk_forward_folds: 6
+  train_ratio: 0.7
+  purge_bars: 24
+  monte_carlo_runs: 500
+  monte_carlo_confidence: 0.95
+  min_oos_ratio: 0.45             # rendimiento OOS / IS minimo
+
+# ---------------------------------------------------------------------
+# Puerta de estabilidad: solo lo que pasa esto opera con dinero
+# ---------------------------------------------------------------------
+stability:
+  min_sharpe: 1.0
+  min_profit_factor: 1.15
+  max_drawdown_pct: 0.20
+  min_trades: 50
+  min_win_rate: 0.35
+  min_folds_profitable: 0.65      # % de tramos walk-forward en verde
+  max_return_std_across_folds: 2.5
+  incubation_days: 10             # dias en papel antes de tocar dinero real
+  incubation_min_trades: 25
+  degradation_sharpe_drop: 0.5
+  consecutive_bad_days: 5
+
+# ---------------------------------------------------------------------
+# Ejecucion
+# ---------------------------------------------------------------------
+execution:
+  mode: paper                # paper | ccxt | mt5
+  exchange: binance
+  symbol: "PAXG/USDT"
+  testnet: true
+  mt5_symbol: XAUUSD
+  mt5_magic: 20250726
+  order_type: market
+  max_slippage_pct: 0.002
+  retry_attempts: 3
+  retry_backoff_seconds: 2.0
+
+  # SALVAGUARDA PRINCIPAL. Con true jamas se envia una orden real.
+  # Ponlo a false solo cuando el bot lleve semanas incubando bien.
+  dry_run: true
+
+# ---------------------------------------------------------------------
+# Autonomia: el ciclo diario
+# ---------------------------------------------------------------------
+autonomy:
+  daily_learning_hour_utc: 22     # tras el cierre de Nueva York
+  discovery_every_days: 3         # cada cuanto se lanza la evolucion completa
+  keep_top_strategies: 10
+  challenger_slots: 3
+  promote_min_improvement: 0.15   # el retador debe superar al campeon un 15%
+  auto_promote: true
+  auto_demote: true
+  max_runtime_minutes: 120
