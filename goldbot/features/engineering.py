@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from goldbot.features import indicators as ta
+from goldbot.features.trend import TREND_COLUMN, TrendFilter
 from goldbot.utils.logging import get_logger
 from goldbot.utils.timeutils import in_overlap, in_session
 
@@ -97,12 +98,41 @@ class FeatureBuilder:
     slow_periods: tuple[int, ...] = (21, 50, 100)
     include_time: bool = True
     include_multiscale: bool = True
+    include_smc: bool = True
+    # Filtro de tendencia. Se inyecta como columna reservada (no entra al
+    # catalogo) y el genoma lo aplica siempre como veto final.
+    trend_filter: TrendFilter | None = None
     _specs: list[FeatureSpec] = field(default_factory=list, init=False, repr=False)
+
+    @classmethod
+    def from_config(cls, config) -> FeatureBuilder:
+        """Construye el generador de features a partir de la configuracion.
+
+        Es el unico sitio donde se arma el filtro de tendencia, para que el
+        backtest, la evolucion y la operativa en vivo compartan exactamente la
+        misma definicion de "a favor de la tendencia". Si cada capa la calculase
+        por su cuenta, el bot podria validar una estrategia con un criterio y
+        operarla con otro.
+        """
+        return cls(
+            include_smc=config.smc.enabled,
+            trend_filter=TrendFilter(
+                enabled=config.trend.enabled,
+                method=config.trend.method,
+                fast_ema=config.trend.fast_ema,
+                mid_ema=config.trend.mid_ema,
+                slow_ema=config.trend.slow_ema,
+                min_slope=config.trend.min_slope,
+                allow_flat=config.trend.allow_flat,
+                swing_left=config.trend.swing_left,
+                swing_right=config.trend.swing_right,
+            ),
+        )
 
     # -- helpers de registro -------------------------------------------- #
     def _add(
         self,
-        out: pd.DataFrame,
+        out: dict,
         name: str,
         series: pd.Series,
         kind: str,
@@ -111,6 +141,10 @@ class FeatureBuilder:
         high: float,
         comparable: bool = True,
     ) -> None:
+        # Se acumula en un diccionario y el DataFrame se arma de una sola vez al
+        # final. Insertar 115 columnas una a una obliga a pandas a recolocar el
+        # bloque en cada asignacion, y el coste no es despreciable cuando esto
+        # se ejecuta en cada ciclo de trading.
         out[name] = series.astype("float64")
         self._specs.append(FeatureSpec(name, kind, group, low, high, comparable))
 
@@ -122,23 +156,33 @@ class FeatureBuilder:
 
         self._specs = []
         o, h, lo, c, v = (df["open"], df["high"], df["low"], df["close"], df["volume"])
-        out = pd.DataFrame(index=df.index)
+        out: dict[str, pd.Series] = {}
 
         self._build_trend(out, o, h, lo, c)
         self._build_momentum(out, o, h, lo, c)
         self._build_volatility(out, o, h, lo, c)
         self._build_volume(out, h, lo, c, v)
         self._build_structure(out, o, h, lo, c)
+        if self.include_smc:
+            self._build_smc(out, o, h, lo, c)
         if self.include_multiscale:
             self._build_multiscale(out, c)
         if self.include_time:
             self._build_time(out, df.index)
 
+        frame = pd.DataFrame(out, index=df.index)
         # Infinitos: aparecen en divisiones por rangos nulos. Se tratan como NaN.
-        out = out.replace([np.inf, -np.inf], np.nan)
+        frame = frame.replace([np.inf, -np.inf], np.nan)
         catalog = FeatureCatalog(self._specs)
-        logger.debug("Construidas %d features", out.shape[1])
-        return out, catalog
+
+        # La direccion de tendencia se anade DESPUES de construir el catalogo:
+        # asi queda disponible para el veto pero invisible para la evolucion,
+        # que no puede crear condiciones sobre una feature que no conoce.
+        if self.trend_filter is not None:
+            frame[TREND_COLUMN] = self.trend_filter.direction(df).astype("float64")
+
+        logger.debug("Construidas %d features", frame.shape[1])
+        return frame, catalog
 
     # -- bloques ---------------------------------------------------------- #
     def _build_trend(self, out, o, h, lo, c) -> None:
@@ -270,7 +314,41 @@ class FeatureBuilder:
             streak = np.sign(c.diff()).rolling(p, min_periods=p).sum()
             self._add(out, f"streak_{p}", streak, "signed", "structure", -float(p), float(p))
 
-    def _build_multiscale(self, out, c: pd.Series) -> None:
+    def _build_smc(self, out, o, h, lo, c) -> None:
+        """Bloque Smart Money Concepts: estructura, liquidez y desequilibrios.
+
+        Todo lo que devuelve ``compute_smc`` viene ya normalizado y es causal:
+        los swings se confirman con retraso, nunca en su propia vela.
+        """
+        from goldbot.features.smc import compute_smc
+
+        atr = ta.atr(h, lo, c, 14)
+        smc = compute_smc(o, h, lo, c, atr)
+
+        # Estructura de mercado y rupturas.
+        self._add(out, "smc_structure", smc["smc_structure"], "signed", "smc", -1, 1, comparable=False)
+        self._add(out, "smc_bos_recent", smc["smc_bos_recent"], "binary", "smc", 0, 1, comparable=False)
+        self._add(out, "smc_choch_recent", smc["smc_choch_recent"], "binary", "smc", 0, 1, comparable=False)
+
+        # Toma de liquidez: el barrido de stops que suele preceder a los giros.
+        self._add(out, "smc_sweep_bull", smc["smc_sweep_bull"], "binary", "smc", 0, 1, comparable=False)
+        self._add(out, "smc_sweep_bear", smc["smc_sweep_bear"], "binary", "smc", 0, 1, comparable=False)
+        self._add(out, "smc_equal_highs", smc["smc_equal_highs"], "binary", "smc", 0, 1, comparable=False)
+        self._add(out, "smc_equal_lows", smc["smc_equal_lows"], "binary", "smc", 0, 1, comparable=False)
+
+        # Distancia a la liquidez en reposo: hacia donde tira el precio.
+        self._add(out, "smc_dist_swing_high", smc["smc_dist_swing_high"], "ratio", "smc", 0.0, 0.01)
+        self._add(out, "smc_dist_swing_low", smc["smc_dist_swing_low"], "ratio", "smc", 0.0, 0.01)
+
+        # Zonas operativas.
+        self._add(out, "smc_premium", smc["smc_premium"], "bounded_1", "smc", 0.15, 0.85)
+        self._add(out, "smc_displacement", smc["smc_displacement"], "ratio", "smc", 0.5, 3.0)
+        self._add(out, "smc_in_bull_ob", smc["smc_in_bull_ob"], "binary", "smc", 0, 1, comparable=False)
+        self._add(out, "smc_in_bear_ob", smc["smc_in_bear_ob"], "binary", "smc", 0, 1, comparable=False)
+        self._add(out, "smc_in_bull_fvg", smc["smc_in_bull_fvg"], "binary", "smc", 0, 1, comparable=False)
+        self._add(out, "smc_in_bear_fvg", smc["smc_in_bear_fvg"], "binary", "smc", 0, 1, comparable=False)
+
+    def _build_multiscale(self, out: dict, c: pd.Series) -> None:
         """Contexto de temporalidades superiores, sin salir del indice M5.
 
         Se calcula con ventanas equivalentes (12 barras M5 = 1h, 288 = 1 dia)
@@ -281,25 +359,25 @@ class FeatureBuilder:
             self._add(out, f"trend_{label}", (c - ta.ema(c, bars)) / c, "ratio", "trend", -0.015, 0.015)
             self._add(out, f"rsi_{label}", ta.rsi(c, bars), "bounded_100", "momentum", 25, 75)
 
-    def _build_time(self, out: pd.DataFrame, index: pd.DatetimeIndex) -> None:
+    def _build_time(self, out: dict, index: pd.DatetimeIndex) -> None:
         hour = index.hour.to_numpy(dtype="float64")
         # Codificacion ciclica: las 23:00 y las 00:00 quedan contiguas.
-        out["hour_sin"] = np.sin(2 * np.pi * hour / 24)
-        out["hour_cos"] = np.cos(2 * np.pi * hour / 24)
+        out["hour_sin"] = pd.Series(np.sin(2 * np.pi * hour / 24), index=index)
+        out["hour_cos"] = pd.Series(np.cos(2 * np.pi * hour / 24), index=index)
         self._specs.append(FeatureSpec("hour_sin", "signed", "time", -1, 1, comparable=False))
         self._specs.append(FeatureSpec("hour_cos", "signed", "time", -1, 1, comparable=False))
 
         for session in ("tokyo", "london", "newyork"):
             name = f"in_{session}"
-            out[name] = in_session(index, session).astype("float64")
+            out[name] = pd.Series(in_session(index, session).astype("float64"), index=index)
             self._specs.append(FeatureSpec(name, "binary", "time", 0, 1, comparable=False))
 
-        out["in_overlap"] = in_overlap(index).astype("float64")
+        out["in_overlap"] = pd.Series(in_overlap(index).astype("float64"), index=index)
         self._specs.append(FeatureSpec("in_overlap", "binary", "time", 0, 1, comparable=False))
 
         dow = index.dayofweek.to_numpy(dtype="float64")
-        out["dow_sin"] = np.sin(2 * np.pi * dow / 7)
-        out["dow_cos"] = np.cos(2 * np.pi * dow / 7)
+        out["dow_sin"] = pd.Series(np.sin(2 * np.pi * dow / 7), index=index)
+        out["dow_cos"] = pd.Series(np.cos(2 * np.pi * dow / 7), index=index)
         self._specs.append(FeatureSpec("dow_sin", "signed", "time", -1, 1, comparable=False))
         self._specs.append(FeatureSpec("dow_cos", "signed", "time", -1, 1, comparable=False))
 
@@ -317,17 +395,25 @@ def build_features(
     builder = builder or FeatureBuilder()
     features, catalog = builder.build(df)
 
+    # Las columnas reservadas (guion bajo inicial) no son features para la
+    # evolucion: son canales de control como el veto de tendencia. Se excluyen
+    # de los descartes y del recorte de filas para que un NaN suyo -- legitimo,
+    # significa "sin opinion sobre la tendencia" -- no borre medio dataset.
+    reserved = [c for c in features.columns if c.startswith("_")]
+
     if dropna and not features.empty:
+        candidates = features.drop(columns=reserved)
         # Descartamos columnas casi enteramente vacias antes de recortar filas:
         # de lo contrario una sola feature mala se lleva por delante el dataset.
-        valid_ratio = features.notna().mean()
+        valid_ratio = candidates.notna().mean()
         weak = valid_ratio[valid_ratio < 0.5].index.tolist()
         if weak:
             logger.debug("Descartadas features con demasiados NaN: %s", weak)
             features = features.drop(columns=weak)
 
         before = len(features)
-        features = features.dropna()
+        # El recorte de warm-up mira solo las features reales.
+        features = features.dropna(subset=[c for c in features.columns if c not in reserved])
         logger.debug("Recorte por warm-up: %d -> %d barras", before, len(features))
 
     aligned = df.loc[features.index]

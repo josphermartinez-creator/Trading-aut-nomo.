@@ -33,6 +33,7 @@ from goldbot.execution.paper import PaperBroker
 from goldbot.features import indicators as ta
 from goldbot.features.engineering import FeatureBuilder, build_features
 from goldbot.ml.trainer import MLTrainer
+from goldbot.notifications.telegram import TelegramBot, TelegramNotifier, build_command_handlers
 from goldbot.risk.circuit_breaker import CircuitBreaker
 from goldbot.risk.manager import RiskManager
 from goldbot.storage.db import Database
@@ -73,10 +74,19 @@ class LiveRunner:
         self.risk = RiskManager(config)
         self.breaker = CircuitBreaker(config)
         self.trainer = MLTrainer(config, self.db)
-        self.feature_builder = FeatureBuilder()
+        self.feature_builder = FeatureBuilder.from_config(config)
 
         self.broker: Broker = build_broker(config, self.market_data)
         self.state = RunnerState()
+
+        # Telegram: avisos y control remoto. Si no esta configurado, el
+        # notificador se queda inerte y no estorba.
+        self.notifier = TelegramNotifier(
+            token=config.telegram_token or "",
+            chat_id=str(config.telegram_chat_id or ""),
+            enabled=config.telegram.enabled,
+        )
+        self.telegram: TelegramBot | None = None
 
         self._champion: StrategyGenome | None = None
         self._champion_id: str | None = None
@@ -123,6 +133,21 @@ class LiveRunner:
         logger.info("Campeon: %s", self._champion_id or "NINGUNO (solo incubacion)")
         logger.info("=" * 70)
 
+        if self.notifier.is_configured:
+            if self.config.telegram.allow_remote_control:
+                self.telegram = TelegramBot(
+                    self.notifier, self.config.telegram.poll_interval_seconds
+                )
+                for name, handler in build_command_handlers(self).items():
+                    self.telegram.register(name, handler)
+                self.telegram.start()
+            self.notifier.startup(
+                mode=self.config.execution.mode,
+                dry_run=self.config.execution.dry_run,
+                champion=self._champion_id,
+                symbol=self._symbol(),
+            )
+
         try:
             while self.state.running:
                 if max_cycles is not None and self.state.cycles >= max_cycles:
@@ -151,6 +176,8 @@ class LiveRunner:
     def stop(self) -> None:
         """Detiene el bucle y cierra la conexion."""
         self.state.running = False
+        if self.telegram is not None:
+            self.telegram.stop()
         try:
             self.broker.disconnect()
         except Exception as exc:
@@ -316,6 +343,18 @@ class LiveRunner:
                 metadata={"confidence": confidence, "atr": atr, "plan": plan.summary()},
             )
             self._open_trade_ids[self._symbol()] = trade_id
+
+            if self.config.telegram.notify_trades:
+                self.notifier.trade_opened(
+                    symbol=self._symbol(),
+                    direction=direction,
+                    lots=filled.filled_volume or plan.lots,
+                    price=filled.filled_price or entry_reference,
+                    stop=plan.stop_loss,
+                    target=plan.take_profit,
+                    strategy=self._champion_id or "?",
+                    confidence=confidence,
+                )
         else:
             logger.error("Orden no ejecutada: %s", filled.error)
             self.breaker.check_error(filled.error or "orden rechazada")
@@ -368,9 +407,22 @@ class LiveRunner:
                 trade_id, now_utc().isoformat(), order.filled_price or 0.0, pnl, reason
             )
 
+        if self.config.telegram.notify_trades:
+            duration = (now_utc() - position.opened_at).total_seconds() / 60
+            self.notifier.trade_closed(
+                symbol=position.symbol, pnl=pnl, reason=reason,
+                balance=account.balance, duration_minutes=duration,
+            )
+
     def _emergency_close(self, reason: str) -> None:
         """Cierra todo. Solo lo invocan los cortacircuitos."""
         logger.error("CIERRE DE EMERGENCIA: %s", reason)
+        status = self.breaker.status()
+        self.notifier.circuit_breaker(
+            reason=status.get("last_reason", reason),
+            detail=reason,
+            resume_at=status.get("reset_at"),
+        )
         try:
             for order in self.broker.close_all(self._symbol(), reason):
                 logger.info("Cerrada: %s", order.summary())

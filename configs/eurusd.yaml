@@ -1,5 +1,5 @@
 # =====================================================================
-# GoldBot - configuracion por defecto
+# GoldBot - configuracion para EUR/USD
 # =====================================================================
 # Las credenciales NUNCA van aqui. Se leen de variables de entorno:
 #   GOLDBOT_API_KEY, GOLDBOT_API_SECRET
@@ -7,18 +7,18 @@
 # =====================================================================
 
 log_level: INFO
-log_file: logs/goldbot.log
-db_path: data/goldbot.db
-artifacts_dir: artifacts
+log_file: logs/eurusd.log
+db_path: data/eurusd.db
+artifacts_dir: artifacts/eurusd
 
 # ---------------------------------------------------------------------
 # Datos
 # ---------------------------------------------------------------------
 data:
-  symbol: XAUUSD
+  symbol: EURUSD
   # Instrumento logico: XAUUSD (oro) o EURUSD. Vacio = se deduce del
   # simbolo. Determina tamano de contrato, costes y rango de precios valido.
-  instrument: ""
+  instrument: EURUSD
   timeframe: 5m
   timeframe_minutes: 5
 
@@ -28,13 +28,13 @@ data:
   #   csv      -> export propio de MetaTrader 5 (la mejor calidad)
   providers: [yfinance, ccxt, csv]
 
-  yfinance_symbol: "GC=F"
-  yfinance_fallback: "XAUUSD=X"
+  yfinance_symbol: "EURUSD=X"
+  yfinance_fallback: "EUR=X"
   ccxt_exchange: binance
-  ccxt_symbol: "PAXG/USDT"
-  csv_path: data/XAUUSD_M5.csv
+  ccxt_symbol: "EUR/USDT"
+  csv_path: data/EURUSD_M5.csv
 
-  cache_dir: data/cache
+  cache_dir: data/cache_eurusd
   history_days: 720          # objetivo; el cache lo va acumulando dia a dia
   min_bars_required: 5000    # por debajo no se entrena con datos reales
   max_gap_minutes: 120
@@ -44,7 +44,7 @@ data:
   # mejores que cualquier proxy: mismo spread, horario y mercado.
   mt5_bootstrap_bars: 5000
   mt5_bootstrap_on_connect: true
-  mt5_symbol: ""             # vacio = autodeteccion (GOLD en XM, XAUUSD+ en Vantage)
+  mt5_symbol: ""             # vacio = autodeteccion (EURUSD, EURUSD+, EURUSD.a...)
 
 # ---------------------------------------------------------------------
 # Costes de transaccion (¡ajustalos a los de TU broker!)
@@ -53,12 +53,13 @@ data:
 # movimiento esperado es del orden del spread: si te quedas corto aqui,
 # toda estrategia parecera rentable.
 costs:
-  spread_points: 0.25        # USD por onza
-  commission_per_lot: 7.0    # USD ida y vuelta por lote estandar
-  slippage_points: 0.10
-  contract_size: 100.0       # onzas por lote
-  swap_long: -0.5
-  swap_short: 0.2
+  # EUR/USD cotiza a 5 decimales: 1 pip = 0.0001.
+  spread_points: 0.00010     # ~1 pip, tipico en cuenta estandar XM/Vantage
+  commission_per_lot: 0.0    # las cuentas estandar no cobran comision aparte
+  slippage_points: 0.00002
+  contract_size: 100000.0    # euros por lote estandar (NO tocar: es del mercado)
+  swap_long: -0.8
+  swap_short: 0.1
 
 # ---------------------------------------------------------------------
 # Riesgo. Estos limites no se negocian en tiempo de ejecucion.
@@ -165,7 +166,7 @@ trend:
   fast_ema: 50             # ~4 horas en M5
   mid_ema: 200             # ~17 horas
   slow_ema: 576            # 2 dias de negociacion
-  min_slope: 0.000005
+  min_slope: 0.000002   # el euro se mueve menos que el oro
   allow_flat: false        # false = tampoco se opera en lateral
   swing_left: 3
   swing_right: 3
@@ -205,9 +206,9 @@ telegram:
 execution:
   mode: paper                # paper | ccxt | mt5
   exchange: binance
-  symbol: "PAXG/USDT"
+  symbol: "EUR/USDT"
   testnet: true
-  mt5_symbol: XAUUSD
+  mt5_symbol: EURUSD
   mt5_magic: 20250726
   order_type: market
   max_slippage_pct: 0.002

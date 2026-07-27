@@ -183,7 +183,7 @@ class Orchestrator:
                 report.add(StageResult("datos", False, error="no se obtuvieron velas", elapsed=time.time() - start))
                 return None, None, None
 
-            ohlcv, features, catalog = build_features(raw, FeatureBuilder())
+            ohlcv, features, catalog = build_features(raw, FeatureBuilder.from_config(self.config))
             report.bars_available = len(ohlcv)
 
             if len(ohlcv) < self.config.data.min_bars_required:

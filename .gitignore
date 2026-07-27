@@ -15,9 +15,12 @@ dist/
 htmlcov/
 
 # --- DATOS Y SECRETOS: nunca al repositorio ---
-data/
-logs/
-artifacts/
+# Las barras iniciales anclan la regla a la raiz del repositorio. Sin ellas,
+# "data/" tambien casaria con "goldbot/data/" y excluiria el modulo de datos
+# del codigo fuente, dejando el repositorio sin poder importarse.
+/data/
+/logs/
+/artifacts/
 *.db
 *.db-wal
 *.db-shm
