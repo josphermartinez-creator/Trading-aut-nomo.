@@ -120,6 +120,7 @@ class LiveRunner:
             logger.error("No se pudo conectar con el broker; abortando")
             return
 
+        self._bootstrap_history()
         self._load_champion()
 
         self.state.running = True
@@ -172,6 +173,33 @@ class LiveRunner:
 
         finally:
             self.stop()
+
+    def _bootstrap_history(self) -> None:
+        """Descarga las velas reales del broker nada mas conectar.
+
+        Se reutiliza el handle de MetaTrader 5 que ya abrio el broker de
+        ejecucion: MT5 solo admite un terminal por proceso, y abrir una segunda
+        conexion desconectaria la primera en mitad de la operativa.
+        """
+        if not self.config.data.mt5_bootstrap_on_connect:
+            return
+        if self.config.execution.mode != "mt5":
+            return
+
+        external = getattr(self.broker, "_mt5", None)
+        if external is None:
+            logger.debug("El broker no expone una conexion MT5 reutilizable")
+            return
+
+        logger.info(
+            "Descargando %d velas reales de %s desde el broker...",
+            self.config.data.mt5_bootstrap_bars,
+            self.config.instrument.name,
+        )
+        try:
+            self.market_data.bootstrap_from_mt5(external_mt5=external)
+        except Exception as exc:
+            logger.warning("El volcado inicial desde MT5 fallo: %s", exc)
 
     def stop(self) -> None:
         """Detiene el bucle y cierra la conexion."""

@@ -338,3 +338,145 @@ def test_telegram_ignora_los_chats_no_autorizados():
     source = inspect.getsource(bot._poll_once)
     assert "chat_id != str(self.notifier.chat_id)" in source
     assert "continue" in source
+
+
+# --------------------------------------------------------------------------- #
+# Volcado inicial de 5.000 velas
+# --------------------------------------------------------------------------- #
+class _FakeMT5:
+    """Terminal MT5 simulado: catalogo de simbolos y velas sinteticas."""
+
+    def __init__(self, symbol_name: str, price: float, bars: int = 6000):
+        import numpy as np
+
+        self._name = symbol_name
+        self._price = price
+        self._bars = bars
+
+        class _Info:
+            def __init__(self, name, price):
+                self.name = name
+                self.bid = self.ask = price
+                self.visible = True
+                self.digits = 2
+                self.point = 0.01
+                self.trade_contract_size = 100.0
+                self.volume_min, self.volume_max, self.volume_step = 0.01, 100.0, 0.01
+                self.description = name
+                self.spread = 25
+
+        self._info = _Info(symbol_name, price)
+        self.TIMEFRAME_M5 = 5
+        self._rng = np.random.default_rng(0)
+
+    def symbol_info(self, name):
+        return self._info if name == self._name else None
+
+    def symbol_info_tick(self, name):
+        return self._info if name == self._name else None
+
+    def symbol_select(self, name, enable=True):
+        return name == self._name
+
+    def symbols_get(self):
+        return [self._info]
+
+    def account_info(self):
+        return None
+
+    def copy_rates_from_pos(self, symbol, timeframe, start, count):
+        """Velas con marcas de tiempo realistas: sin fines de semana.
+
+        Un terminal MT5 real no entrega velas de sabado ni domingo. Generarlas
+        haria que la limpieza descartase un 26% del volcado y la prueba medina
+        el filtro de fin de semana en vez del volcado.
+        """
+        import numpy as np
+        import pandas as pd
+
+        from goldbot.utils.timeutils import is_weekend_gap
+
+        n = min(count, self._bars)
+        # Se pide margen de sobra y se recortan las ultimas n tras filtrar.
+        index = pd.date_range("2024-01-01", periods=int(n * 1.8) + 500, freq="5min", tz="UTC")
+        index = index[~is_weekend_gap(index)][-n:]
+
+        returns = self._rng.normal(0, 0.0008, n)
+        close = self._price * np.exp(np.cumsum(returns))
+        wick = np.abs(self._rng.normal(0, 0.0004, n)) * close
+        # Division por Timedelta: independiente de la resolucion interna de
+        # pandas (ns en 2.x, us en 3.x). Aritmetica sobre astype("int64")
+        # da resultados silenciosamente erroneos al cambiar de version.
+        epochs = ((index - pd.Timestamp("1970-01-01", tz="UTC")) // pd.Timedelta("1s")).to_numpy()
+
+        return np.array(
+            [
+                (int(epochs[i]), close[i], close[i] + wick[i], close[i] - wick[i], close[i], 100, 2, 0)
+                for i in range(n)
+            ],
+            dtype=[
+                ("time", "i8"), ("open", "f8"), ("high", "f8"), ("low", "f8"),
+                ("close", "f8"), ("tick_volume", "i8"), ("spread", "i4"), ("real_volume", "i8"),
+            ],
+        )
+
+
+def test_el_volcado_inicial_descarga_las_velas_pedidas(config, tmp_path):
+    """El requisito principal: 5.000 velas reales del broker al conectar."""
+    import copy
+
+    from goldbot.data.pipeline import MarketData
+
+    cfg = copy.deepcopy(config)
+    cfg.data.cache_dir = str(tmp_path / "cache")
+    cfg.data.mt5_bootstrap_bars = 5000
+
+    market = MarketData(cfg, providers=[])
+    df = market.bootstrap_from_mt5(external_mt5=_FakeMT5("GOLD", 2650.0))
+
+    # Se pide una vela de mas y se descarta la que sigue en formacion.
+    assert len(df) >= 4900, f"solo llegaron {len(df)} velas"
+    assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+    assert df.index.is_monotonic_increasing
+    assert str(df.index.tz) == "UTC"
+
+    # Y queda persistido para el siguiente arranque.
+    assert len(market.cache.load()) >= 4900
+
+
+def test_el_volcado_descarta_la_vela_en_formacion():
+    """La vela en curso cambia hasta que cierra: entrenar con ella es ruido."""
+    from goldbot.data.mt5_provider import MT5Provider
+
+    provider = MT5Provider(instrument="XAUUSD", bootstrap_bars=100)
+    fake = _FakeMT5("GOLD", 2650.0, bars=10_000)
+    assert provider.connect(external_mt5=fake)
+
+    df = provider.bootstrap("5m", bars=100)
+    # Se piden 101 al terminal y se devuelve 100: la ultima se descarta.
+    assert len(df) == 100
+
+
+def test_el_volcado_degrada_sin_mt5(config, tmp_path):
+    """En Linux, sin la libreria, no debe romper el arranque."""
+    import copy
+
+    from goldbot.data.pipeline import MarketData
+
+    cfg = copy.deepcopy(config)
+    cfg.data.cache_dir = str(tmp_path / "vacio")
+
+    market = MarketData(cfg, providers=[])
+    df = market.bootstrap_from_mt5()  # sin conexion externa ni libreria
+    assert df.empty or len(df) == 0
+
+
+def test_mt5_encabeza_la_cadena_de_proveedores():
+    """Si no, el volcado de 5.000 velas nunca llegaria a ejecutarse."""
+    from goldbot.config import load_config
+
+    for ruta in ("configs/default.yaml", "configs/eurusd.yaml"):
+        cfg = load_config(ruta)
+        assert cfg.data.providers[0] == "mt5", f"{ruta}: mt5 debe ir primero"
+        assert cfg.data.mt5_bootstrap_bars == 5000
+        assert cfg.data.mt5_bootstrap_on_connect

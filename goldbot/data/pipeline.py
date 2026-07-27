@@ -17,7 +17,7 @@ from goldbot.config import Config
 from goldbot.data.cache import OHLCV_COLUMNS, ParquetCache
 from goldbot.data.providers import DataProvider, SyntheticProvider, build_providers
 from goldbot.utils.logging import get_logger
-from goldbot.utils.timeutils import UTC, ensure_utc_index, is_weekend_gap, now_utc
+from goldbot.utils.timeutils import ensure_utc_index, is_weekend_gap, now_utc
 
 logger = get_logger(__name__)
 
@@ -92,6 +92,60 @@ class MarketData:
         fetched = self._clean(fetched)
         merged = self.cache.merge(fetched)
         return self._clean(merged)
+
+    def bootstrap_from_mt5(self, external_mt5=None, bars: int | None = None) -> pd.DataFrame:
+        """Volcado inicial de velas reales del broker y persistencia en cache.
+
+        Es lo primero que ocurre al conectar con MetaTrader 5. Frente a los
+        proveedores publicos, estas velas son las del broker con el que se va a
+        operar de verdad: mismo spread, mismo horario de servidor y mismo
+        instrumento, de modo que la estrategia se adapta a lo que realmente se
+        va a encontrar en vivo.
+
+        ``external_mt5`` reutiliza la conexion que ya abrio el broker de
+        ejecucion. Importa: MetaTrader 5 solo admite un terminal por proceso, y
+        abrir una segunda conexion desconecta la primera.
+        """
+        from goldbot.data.mt5_provider import MT5Provider
+
+        provider = MT5Provider(
+            symbol=self.config.data.mt5_symbol or None,
+            instrument=self.config.instrument,
+            bootstrap_bars=bars or self.config.data.mt5_bootstrap_bars,
+            login=self.config.mt5_login,
+            password=self.config.mt5_password,
+            server=self.config.mt5_server,
+        )
+
+        if not provider.connect(external_mt5=external_mt5):
+            logger.warning("No se pudo conectar con MT5 para el volcado inicial")
+            return self.load()
+
+        try:
+            fresh = provider.bootstrap(self.config.data.timeframe)
+            if fresh.empty:
+                logger.warning("MT5 no devolvio velas en el volcado inicial")
+                return self.load()
+
+            # Los costes reales del broker son mejores que cualquier estimacion:
+            # es lo que hace que backtest y operativa converjan.
+            costs = provider.broker_costs()
+            if costs:
+                logger.info(
+                    "Costes leidos del broker: spread=%.5f contrato=%.0f lote min=%.2f",
+                    costs["spread_points"], costs["contract_size"], costs["min_lot_size"],
+                )
+
+            merged = self.cache.merge(self._clean(fresh))
+            logger.info(
+                "Volcado inicial completado: %d velas de %s (cache total: %d)",
+                len(fresh), provider.symbol_info.name if provider.symbol_info else "?", len(merged),
+            )
+            return self._clean(merged)
+        finally:
+            # Solo se cierra si la conexion era nuestra.
+            if external_mt5 is None:
+                provider.disconnect()
 
     def load(self, min_bars: int | None = None) -> pd.DataFrame:
         """Devuelve el historico cacheado ya limpio (sin tocar la red)."""
