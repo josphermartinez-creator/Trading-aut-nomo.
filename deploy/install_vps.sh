@@ -8,7 +8,9 @@
 set -euo pipefail
 
 INSTALL_DIR="${INSTALL_DIR:-/opt/goldbot}"
-REPO_URL="${REPO_URL:-https://github.com/josphermartinez-creator/Trading-aut-nomo.git}"
+# OJO: el nombre del repositorio termina en punto. Sin el, GitHub
+# devuelve "Repository not found".
+REPO_URL="${REPO_URL:-https://github.com/josphermartinez-creator/Trading-aut-nomo.}"
 SERVICE_USER="goldbot"
 
 log()  { echo -e "\033[32m[+]\033[0m $*"; }

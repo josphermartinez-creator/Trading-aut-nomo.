@@ -51,7 +51,7 @@ Arranca en `dry_run: true`. Déjalo así durante semanas.
 > a dinero real.
 
 ```bash
-git clone https://github.com/josphermartinez-creator/Trading-aut-nomo.git
+git clone "https://github.com/josphermartinez-creator/Trading-aut-nomo."
 cd Trading-aut-nomo
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .

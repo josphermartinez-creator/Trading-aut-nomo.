@@ -54,13 +54,30 @@ Debe responder `Python 3.11.x` o superior.
 
 ### Paso 3 — Descargar el bot
 
+> **Atención al punto final.** El repositorio se llama `Trading-aut-nomo.`,
+> terminado en punto. Si escribes `Trading-aut-nomo.git`, git interpreta ese
+> `.git` como sufijo y busca un repositorio sin el punto, que no existe:
+> *Repository not found*. Las comillas evitan que la consola se coma el punto.
+
 ```powershell
-cd $HOME
-git clone https://github.com/josphermartinez-creator/Trading-aut-nomo.git goldbot
+cd %USERPROFILE%
+git clone "https://github.com/josphermartinez-creator/Trading-aut-nomo." goldbot
 cd goldbot
 ```
 
-Si no tienes git, descarga el ZIP desde GitHub y descomprímelo.
+**Comprueba que funcionó antes de seguir:**
+
+```powershell
+dir requirements.txt
+```
+
+Si responde *No se encuentra el archivo*, el clon falló y los pasos siguientes
+darán errores confusos (`No such file or directory: 'requirements.txt'`,
+`neither setup.py nor pyproject.toml found`). Esos mensajes no significan que
+falte Python: significan que estás en la carpeta equivocada.
+
+**Alternativa sin git:** en la página del repositorio, botón verde **Code →
+Download ZIP**. Descomprime y entra en la carpeta resultante.
 
 ### Paso 4 — Instalar
 
@@ -71,6 +88,19 @@ pip install -r requirements.txt
 pip install -e .
 pip install MetaTrader5
 ```
+
+> Si `pip install MetaTrader5` falla con **`Missing dependencies for SOCKS
+> support`**, tu sistema tiene configurado un proxy SOCKS que pip no sabe usar.
+> Se arregla con una de estas dos:
+>
+> ```powershell
+> pip install pysocks          # opción 1: darle a pip lo que le falta
+> ```
+> ```powershell
+> set HTTP_PROXY=              # opción 2: quitar el proxy en esta sesión
+> set HTTPS_PROXY=
+> pip install MetaTrader5
+> ```
 
 Verás `(.venv)` al principio de la línea: significa que el entorno está activo.
 **Cada vez que abras una ventana nueva de PowerShell tendrás que volver a
@@ -200,7 +230,7 @@ y registra el servicio systemd. Al terminar te dice qué hacer.
 
 ```bash
 sudo apt update && sudo apt install -y python3 python3-venv git build-essential
-git clone https://github.com/josphermartinez-creator/Trading-aut-nomo.git goldbot
+git clone "https://github.com/josphermartinez-creator/Trading-aut-nomo." goldbot
 cd goldbot
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
@@ -229,7 +259,7 @@ unos minutos al día; el resto del tiempo el bot duerme entre velas.
 La forma más rápida de probarlo sin instalar nada en el sistema.
 
 ```bash
-git clone https://github.com/josphermartinez-creator/Trading-aut-nomo.git goldbot
+git clone "https://github.com/josphermartinez-creator/Trading-aut-nomo." goldbot
 cd goldbot
 cp .env.example .env        # edítalo si quieres Telegram
 docker compose up -d
@@ -336,6 +366,23 @@ de continuar. Es a propósito.
 ---
 
 ## Problemas frecuentes
+
+**`Repository not found` al clonar**
+El nombre del repositorio termina en punto. Usa la URL entre comillas y **sin**
+`.git`:
+`git clone "https://github.com/josphermartinez-creator/Trading-aut-nomo." goldbot`
+
+**`No such file or directory: 'requirements.txt'`**
+No estás dentro de la carpeta del proyecto. Casi siempre porque el `git clone`
+falló antes y el `cd goldbot` no llegó a funcionar. Vuelve al Paso 3.
+
+**`neither 'setup.py' nor 'pyproject.toml' found`**
+Lo mismo: `pip install -e .` se está ejecutando fuera del proyecto. Comprueba con
+`dir requirements.txt` que estás donde debes.
+
+**`Missing dependencies for SOCKS support`**
+Tienes un proxy SOCKS configurado. `pip install pysocks`, o desactívalo con
+`set HTTP_PROXY=` y `set HTTPS_PROXY=`.
 
 **`goldbot: command not found` / `no se reconoce como comando`**
 No has activado el entorno virtual. Ejecuta `.venv\Scripts\activate` (Windows) o
