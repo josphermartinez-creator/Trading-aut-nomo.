@@ -50,6 +50,16 @@ Arranca en `dry_run: true`. Déjalo así durante semanas.
 > — cubre Windows + MT5 (XM/Vantage), VPS Linux, Docker, Telegram y el paso
 > a dinero real.
 
+### Windows (es donde vive MetaTrader 5)
+
+Descarga el proyecto y haz **doble clic en `instalar.bat`**. Instala todo solo
+—entorno virtual, librerías, MetaTrader5— y al terminar abre el `.env` para que
+pongas tus credenciales. Después, para todo lo demás: **`arrancar.bat`**, que
+es un menú con las operaciones habituales (descubrir, arrancar, ver estado,
+cambiar de instrumento).
+
+### Linux / macOS
+
 ```bash
 git clone "https://github.com/josphermartinez-creator/Trading-aut-nomo."
 cd Trading-aut-nomo
@@ -431,6 +441,11 @@ goldbot/
 ├── autonomy/           Puerta de estabilidad, registro campeón, orquestador
 ├── notifications/      Bot de Telegram (avisos + control remoto)
 └── storage/            Persistencia SQLite
+
+instalar.bat            Instalador de un clic para Windows
+arrancar.bat            Menú de uso diario para Windows
+configs/                default.yaml (oro) y eurusd.yaml
+deploy/                 install_vps.sh y unidad systemd
 ```
 
 ---

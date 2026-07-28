@@ -15,6 +15,48 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "default.yaml"
+ENV_FILE = PROJECT_ROOT / ".env"
+
+
+def load_dotenv(path: str | Path | None = None) -> dict[str, str]:
+    """Vuelca el fichero ``.env`` en ``os.environ``.
+
+    En Linux de esto se encargan systemd (``EnvironmentFile=``) o Docker
+    (``env_file:``), pero en Windows no hay nadie que lo haga: sin esto el
+    usuario rellena el ``.env`` con sus credenciales de MT5 y el bot nunca
+    las ve.
+
+    Las variables que ya existen en el entorno tienen prioridad, de modo que
+    un ``set GOLDBOT_MODE=paper`` en la consola sigue mandando sobre el
+    fichero. Devuelve las claves efectivamente aplicadas.
+    """
+    env_path = Path(path) if path else ENV_FILE
+    applied: dict[str, str] = {}
+    if not env_path.is_file():
+        return applied
+
+    for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        # Comillas envolventes: systemd las admite, asi que el mismo fichero
+        # tiene que valer para las dos rutas de despliegue.
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if key in os.environ:
+            continue
+        os.environ[key] = value
+        applied[key] = value
+    return applied
 
 
 @dataclass
@@ -346,6 +388,7 @@ class Config:
     @classmethod
     def load(cls, path: str | Path | None = None) -> Config:
         """Carga la configuracion, aplicando los overrides de entorno."""
+        load_dotenv()
         path = Path(path) if path else DEFAULT_CONFIG_PATH
         raw: dict[str, Any] = {}
         if path.exists():

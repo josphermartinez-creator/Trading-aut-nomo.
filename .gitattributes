@@ -1,0 +1,26 @@
+# Normalizacion de finales de linea.
+#
+# Los .bat TIENEN que llegar a Windows con CRLF. cmd.exe lee el fichero por
+# bloques y con finales LF los "goto" y las etiquetas pueden saltar a sitios
+# equivocados o cortarse a medias: el instalador fallaria de formas raras y
+# dificiles de diagnosticar. Esto tambien se aplica al ZIP que genera GitHub.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Los scripts de shell al reves: con CRLF, Linux responde "bad interpreter".
+*.sh text eol=lf
+
+# El resto, normalizado a LF dentro del repositorio.
+* text=auto
+*.py text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+
+# Binarios: sin tocar.
+*.parquet binary
+*.png binary
+*.jpg binary
+*.pkl binary
+*.joblib binary
