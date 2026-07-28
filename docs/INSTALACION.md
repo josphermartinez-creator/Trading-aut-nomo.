@@ -29,7 +29,13 @@ Los dos `.bat` hacen todo lo demás. Los pasos de abajo son eso mismo, explicado
 
 ### Paso 1 — Instalar Python
 
-Descarga Python 3.11 o 3.12 desde [python.org](https://www.python.org/downloads/windows/).
+Descarga **Python 3.12** desde [python.org](https://www.python.org/downloads/windows/).
+
+> **Elige 3.12 aunque haya versiones más nuevas.** MetaQuotes publica los
+> *wheels* de `MetaTrader5` con meses de retraso, así que en la versión recién
+> salida no hay nada que instalar — y sin esa librería no hay conexión con XM ni
+> con Vantage. Si ya tienes varias versiones instaladas, `instalar.bat` elige
+> sola la más adecuada.
 
 > En el instalador, **marca la casilla "Add Python to PATH"**. Si se te olvida,
 > ningún comando de esta guía funcionará y tendrás que reinstalar.
@@ -416,11 +422,53 @@ Lo mismo: `pip install -e .` se está ejecutando fuera del proyecto. Comprueba c
 `dir requirements.txt` que estás donde debes.
 
 **`Missing dependencies for SOCKS support`**
-Tienes un proxy SOCKS configurado (lo dejan muchas VPN y algunos antivirus).
-Desactívalo en esa ventana con `set HTTP_PROXY=`, `set HTTPS_PROXY=` y
-`set ALL_PROXY=`, y repite el comando. **No intentes `pip install pysocks`:** para
-instalarlo pip necesita la red, que es justo lo que el proxy está bloqueando.
-`instalar.bat` y `arrancar.bat` ya hacen esto solos.
+Tienes un proxy SOCKS configurado (lo dejan muchas VPN y algunos antivirus) y
+Python no sabe hablar SOCKS. Dos cosas que **no** funcionan, y conviene saber por
+qué:
+
+- `pip install pysocks` — para instalarlo pip necesita la red, que es justo lo
+  que está bloqueado.
+- `set HTTP_PROXY=` a secas — y esta es la contraintuitiva. En Windows Python
+  resuelve el proxy así:
+
+  ```python
+  def getproxies():
+      return getproxies_environment() or getproxies_registry()
+  ```
+
+  y `getproxies_environment()` **descarta las variables vacías**. Al vaciarlas, el
+  diccionario queda vacío, eso es *falso*, y Python pasa a leer el proxy del
+  **registro de Windows** — que es exactamente donde lo dejó la VPN. Vaciar las
+  variables no arregla el problema: lo provoca.
+
+Lo que sí funciona es dejar el diccionario no vacío pero sin proxy para
+http/https. `NO_PROXY` también termina en `_proxy`, así que cuenta como entrada y
+corta la consulta al registro:
+
+```powershell
+set HTTP_PROXY=
+set HTTPS_PROXY=
+set ALL_PROXY=
+set NO_PROXY=*
+```
+
+`instalar.bat` y `arrancar.bat` ya lo hacen solos. Si aun así falla, el proxy está
+forzado a otro nivel: **Tecla Windows → «proxy» → Configuración de proxy →
+desactiva «Usar un servidor proxy»**, y desconecta la VPN.
+
+Para ver qué está pasando exactamente, ejecuta el diagnóstico (opción 9 de
+`arrancar.bat`), que te dice qué proxy ve Python, de dónde sale y si hay salida a
+PyPI:
+
+```powershell
+.venv\Scripts\python.exe scripts\diagnostico_red.py
+```
+
+**`MetaTrader5` no se instala**
+Suele ser la versión de Python: MetaQuotes publica sus *wheels* con retraso y en
+la versión recién salida (3.14, 3.15…) todavía no hay. Instala **Python 3.12** de
+python.org y vuelve a ejecutar `instalar.bat`: detecta la versión más adecuada
+que tengas y rehace el entorno con ella.
 
 **`goldbot: command not found` / `no se reconoce como comando`**
 No has activado el entorno virtual. En Windows lo más simple es no activarlo y
