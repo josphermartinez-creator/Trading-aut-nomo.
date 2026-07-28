@@ -11,7 +11,11 @@ scikit-learn>=1.4
 
 # --- optimizacion ---
 optuna>=3.5            # refinamiento bayesiano
-deap>=1.4              # utilidades de algoritmos geneticos
+# DEAP estaba aqui y se ha quitado a proposito: el motor genetico de
+# goldbot/evolution esta escrito a mano (el genoma es un arbol de reglas
+# plano, no un arbol GP arbitrario) y DEAP no se importa en ninguna parte.
+# Al ser una extension en C, cada version nueva de Python la deja sin wheel
+# durante meses y rompia la instalacion sin aportar nada.
 
 # --- datos y ejecucion ---
 yfinance>=0.2.40       # futuros/spot de oro (GC=F, XAUUSD=X)

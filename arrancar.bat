@@ -13,13 +13,23 @@ REM ======================================================================
 cd /d "%~dp0"
 
 REM El proxy SOCKS que bloquea a pip tambien bloquea las descargas de
-REM historico. Se desactiva solo para esta ventana.
+REM historico. Se neutraliza solo para esta ventana.
+REM
+REM No basta con vaciar las variables: en Windows, si el diccionario de
+REM proxies del entorno queda vacio, Python pasa a leer el proxy DEL
+REM REGISTRO. Hay que dejarlo no vacio pero sin http ni https, y de eso se
+REM encarga NO_PROXY (que tambien acaba en "_proxy" y por tanto cuenta).
+REM Explicacion larga en scripts\diagnostico_red.py.
 set HTTP_PROXY=
 set HTTPS_PROXY=
 set ALL_PROXY=
+set FTP_PROXY=
 set http_proxy=
 set https_proxy=
 set all_proxy=
+set ftp_proxy=
+set NO_PROXY=*
+set no_proxy=*
 
 set "VPY=%CD%\.venv\Scripts\python.exe"
 if not exist "!VPY!" (
@@ -59,6 +69,7 @@ echo   ------------------------------------------------------------------
 echo    6.  Cambiar de instrumento  (oro / EURUSD)
 echo    7.  Editar mis credenciales (.env)
 echo    8.  Comprobar la conexion con MetaTrader 5
+echo    9.  Diagnosticar la conexion a internet
 echo   ------------------------------------------------------------------
 echo    0.  Salir
 echo.
@@ -73,6 +84,7 @@ if "!OPCION!"=="5" goto :informe
 if "!OPCION!"=="6" goto :instrumento
 if "!OPCION!"=="7" goto :credenciales
 if "!OPCION!"=="8" goto :probar_mt5
+if "!OPCION!"=="9" goto :probar_red
 if "!OPCION!"=="0" exit /b 0
 goto :menu
 
@@ -223,6 +235,18 @@ if errorlevel 1 (
     echo     - Credenciales correctas en .env ^(opcion 7^)
     echo     - GOLDBOT_MODE=mt5 en el fichero .env
 )
+echo.
+pause
+goto :menu
+
+REM ----------------------------------------------------------------------
+:probar_red
+cls
+echo ======================================================================
+echo   DIAGNOSTICO DE CONEXION
+echo ======================================================================
+echo.
+"!VPY!" scripts\diagnostico_red.py
 echo.
 pause
 goto :menu
