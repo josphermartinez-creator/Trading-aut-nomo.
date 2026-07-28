@@ -178,12 +178,21 @@ class Orchestrator:
         self.db.update_run(run_id, "datos")
 
         try:
+            # Volcado desde el broker cuando el cache aun no da para entrenar.
+            # Es la via por la que el ciclo de aprendizaje obtiene las 5.000
+            # velas reales la primera vez que se ejecuta contra XM o Vantage.
+            if (
+                self.config.data.mt5_bootstrap_on_connect
+                and len(self.market_data.cache.load()) < self.config.data.min_bars_required
+            ):
+                self.market_data.bootstrap_from_mt5()
+
             raw = self.market_data.get(refresh=True)
             if raw.empty:
                 report.add(StageResult("datos", False, error="no se obtuvieron velas", elapsed=time.time() - start))
                 return None, None, None
 
-            ohlcv, features, catalog = build_features(raw, FeatureBuilder())
+            ohlcv, features, catalog = build_features(raw, FeatureBuilder.from_config(self.config))
             report.bars_available = len(ohlcv)
 
             if len(ohlcv) < self.config.data.min_bars_required:

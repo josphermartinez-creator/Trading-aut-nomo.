@@ -27,6 +27,7 @@ import pandas as pd
 from goldbot.backtest.engine import ExitRules
 from goldbot.config import EvolutionConfig
 from goldbot.features.engineering import FeatureCatalog
+from goldbot.features.trend import TREND_COLUMN, apply_trend_veto
 from goldbot.strategies.base import Strategy
 from goldbot.utils.logging import get_logger
 
@@ -181,6 +182,16 @@ class StrategyGenome(Strategy):
         # Senal contradictoria (larga y corta a la vez) = sin senal. Es mas
         # honesto que inventar un desempate arbitrario.
         signals[long_mask & short_mask] = 0.0
+
+        # Veto de tendencia. Se aplica al final y desde FUERA del genoma: la
+        # columna reservada no aparece en el catalogo, asi que la evolucion no
+        # puede construir condiciones sobre ella ni eliminarla. Si estuviera
+        # dentro del arbol genetico, el optimizador acabaria descartandola en
+        # cuanto encontrase un tramo del historico donde ir a contracorriente
+        # rentase mas, y siempre existe ese tramo.
+        if TREND_COLUMN in features.columns:
+            signals = apply_trend_veto(signals, features[TREND_COLUMN])
+
         return signals
 
     # -- introspeccion --------------------------------------------------- #

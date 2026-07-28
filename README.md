@@ -1,16 +1,21 @@
-# GoldBot — Bot autónomo de trading de oro (XAU/USD) en M5
+# GoldBot — Bot autónomo de trading en M5 (XAU/USD y EUR/USD)
 
 Sistema de trading que **inventa sus propias estrategias**, las valida con un
 protocolo estadístico exigente, las incuba en papel y solo promueve a producción
 aquellas que demuestran estabilidad sostenida. Reaprende cada día.
 
 ```
-Datos M5 ──► 99 indicadores ──► Algoritmo genético ──► Optuna ──► Puerta de
-                                (inventa reglas)      (afina)     estabilidad
-                                                                       │
-   Trading en vivo ◄── Campeón ◄── Promoción ◄── Incubadora papel ◄────┘
-                          │                          (10 días)
-                          └──► Vigilancia de deriva ──► Retirada si se degrada
+MT5 (XM/Vantage) ──► 5.000 velas reales ──► 114 features ──► Algoritmo genético
+   autodetecta                              (incl. SMC)       (inventa reglas)
+   el símbolo                                                        │
+                                                    Optuna ◄─────────┘
+                                                      │
+   Trading en vivo ◄── Campeón ◄── Promoción ◄── Incubadora ◄── Puerta de
+        │                                        papel 10d      estabilidad
+        ├──► Telegram: avisos + /pausar /cerrartodo /parar
+        └──► Vigilancia de deriva ──► Retirada si se degrada
+
+        ⛔ VETO DE TENDENCIA — aplicado fuera del genoma, en toda señal
 ```
 
 ---
@@ -41,6 +46,10 @@ Arranca en `dry_run: true`. Déjalo así durante semanas.
 
 ## Instalación
 
+> **Guía paso a paso completa:** [`docs/INSTALACION.md`](docs/INSTALACION.md)
+> — cubre Windows + MT5 (XM/Vantage), VPS Linux, Docker, Telegram y el paso
+> a dinero real.
+
 ```bash
 git clone https://github.com/josphermartinez-creator/Trading-aut-nomo.git
 cd Trading-aut-nomo
@@ -69,6 +78,54 @@ goldbot schedule               # trading + aprendizaje diario a las 22:00 UTC
 
 ## Cómo funciona
 
+
+### 0. Arranque contra el bróker (XM / Vantage)
+
+Al conectar con MetaTrader 5, lo primero que hace el bot es **descargar 5.000
+velas M5 reales del bróker** y adaptar la estrategia sobre esos datos. Son
+mejores que cualquier proxy: mismo spread, mismo horario de servidor, mismo
+instrumento que vas a operar.
+
+El símbolo **se autodetecta**, porque cada bróker lo llama de forma distinta:
+
+| Bróker | Oro | Euro |
+|---|---|---|
+| **XM** | `GOLD` | `EURUSD` |
+| **Vantage** (STP) | `XAUUSD+` | `EURUSD+` |
+| otros | `XAUUSD.a`, `XAUUSDm`, `XAUUSD_i` | `EURUSD.a`, `EURUSDm` |
+
+Si ninguno de los alias conocidos existe, el bot recorre el catálogo del bróker
+buscando el instrumento. Y descarta cualquier símbolo cuyo precio caiga fuera
+del rango esperado: si "XAUUSD" cotiza a 1,08, el símbolo se resolvió mal y
+operar así es la forma más rápida de perderlo todo.
+
+La vela en curso se descarta siempre — todavía se está formando.
+
+### 0b. Dos instrumentos
+
+```bash
+goldbot -c configs/default.yaml learn --bootstrap   # oro
+goldbot -c configs/eurusd.yaml  learn --bootstrap   # euro
+```
+
+Un proceso por instrumento, cada uno con su caché, su base de datos y su
+campeón. Mezclarlos en un mismo motor evolutivo produciría estrategias promedio
+que no funcionan bien en ninguno.
+
+Lo único que cambia de verdad entre ambos es el **tamaño de contrato**: 100
+onzas en oro frente a 100.000 unidades en euro. Con el mismo número de lotes, el
+riesgo en dólares difiere en tres órdenes de magnitud. Por eso el sistema lo
+impone desde el registro de instrumentos y **rechaza arrancar** si el YAML
+declara un contrato que no corresponde:
+
+```
+ValueError: costs.contract_size=100.0 no corresponde a EURUSD
+            (deberia ser 100000.0)
+```
+
+Ese error no es una molestia: es lo que impide que un descuido multiplique tus
+posiciones por mil.
+
 ### 1. Datos — el histórico crece solo
 
 El oro spot no cotiza en exchanges cripto, así que se combinan tres fuentes:
@@ -83,7 +140,7 @@ Ningún proveedor gratuito entrega dos años de M5 de golpe. La solución es un
 **caché incremental en Parquet**: cada ejecución diaria vuelca lo nuevo, y a los
 pocos meses dispones de un histórico que no podrías descargar de una vez.
 
-### 2. Features — 99 indicadores causales
+### 2. Features — 114 features causales
 
 Tendencia, momento, volatilidad, volumen, estructura y sesión. Cada una se
 registra con metadatos (`FeatureSpec`) que describen su *tipo* y su rango útil.
@@ -93,6 +150,70 @@ RSI con 70 es razonable, compararlo con el precio del oro no lo es. El catálogo
 lo impide por construcción.
 
 **Regla inviolable:** ningún indicador mira al futuro. Verificado por test.
+
+
+### 2b. Smart Money Concepts y toma de liquidez
+
+15 features SMC alimentan al genético junto al resto:
+
+- **Estructura**: BOS (ruptura de estructura) y CHoCH (cambio de carácter)
+- **Toma de liquidez**: barridos de stops sobre máximos/mínimos previos, y
+  máximos/mínimos iguales (bolsas de liquidez en reposo)
+- **Order blocks**: última vela opuesta antes del impulso que rompe estructura
+- **Fair Value Gaps**: desequilibrios de tres velas sin negociación
+- **Premium/discount**: posición dentro del rango operativo
+
+**El detalle que casi todo el mundo se salta:** un swing no se conoce en su
+propia vela. Hacen falta N velas posteriores que no lo superen para
+confirmarlo. Las implementaciones que usan `rolling(center=True)` y marcan el
+swing donde ocurrió meten N barras de futuro en cada señal — y sobre esa fuga el
+genético construye estrategias irreproducibles.
+
+Aquí la confirmación se desplaza siempre hacia atrás: en la barra `t` se
+pregunta si la barra `t-right` fue el extremo de una ventana **que termina en
+t**. Verificado por test.
+
+### 2c. Prohibición de operar contra la tendencia
+
+Esto **no es una condición del genoma**. Si lo fuera, el algoritmo la eliminaría
+en cuanto encontrase un tramo del histórico donde ir a contracorriente rentase
+más — y ese tramo siempre existe.
+
+La dirección se calcula fuera del árbol genético, se inyecta como columna
+reservada (`_trend_direction`) que **no aparece en el catálogo**, y se aplica
+como veto final a toda señal. El genético no puede construir condiciones sobre
+ella ni desactivarla.
+
+| Método | Criterio |
+|---|---|
+| `ema_stack` | EMA 50 > 200 > 576 ordenadas |
+| `ema_slope` | Pendiente de la EMA lenta |
+| `structure` | Estructura de mercado SMC |
+| `combined` | Acuerdo entre los tres *(por defecto)* |
+
+Con `allow_flat: false` tampoco se opera en lateral: en un mercado sin dirección
+la mejor operación suele ser ninguna. En mis pruebas eso deja fuera ~40% de las
+barras — es el precio de la restricción, y es intencionado.
+
+```
+tests/test_smc_trend.py::test_ninguna_estrategia_puede_operar_contra_la_tendencia
+30 estrategias aleatorias · 84.131 señales · 0 contra tendencia
+```
+
+### 2d. Telegram
+
+Avisos de apertura y cierre de operaciones, informe diario, cambio de campeón y
+cortacircuitos. Y control desde el móvil:
+
+```
+/estado      /posiciones   /hoy        /campeon
+/estrategias /pausar       /reanudar
+/cerrartodo  /parar        (piden confirmación)
+```
+
+Solo obedece al `chat_id` autorizado — el bot puede cerrar posiciones, así que
+cualquier otro chat se registra y se ignora. El token va en
+`GOLDBOT_TELEGRAM_TOKEN`, nunca en el YAML.
 
 ### 3. El genético — aquí es donde se inventan las estrategias
 
@@ -272,7 +393,7 @@ corruptos, huecos de precio y datos obsoletos.
 |---|---|---|---|
 | `paper` | — | Sí | Por defecto. Precios reales, dinero simulado |
 | `ccxt` | `PAXG/USDT` | **No** | Spot: tener PAXG *es* estar largo |
-| `mt5` | `XAUUSD` | Sí | La vía correcta. Solo Windows |
+| `mt5` | `XAUUSD` / `EURUSD` | Sí | **La vía correcta** (XM, Vantage). Solo Windows |
 
 **PAXG no es XAU/USD.** Cotiza contra USDT, tiene su propia prima y su liquidez
 es una fracción de la del oro real. Para operar oro de verdad con cortos y
@@ -295,10 +416,11 @@ El comando `run` pide confirmación escrita antes de operar en real.
 ```
 goldbot/
 ├── config.py           Configuración tipada (YAML + variables de entorno)
+├── instruments.py      Registro XAUUSD / EURUSD (contrato, costes, rangos)
 ├── cli.py              Interfaz de línea de comandos
 ├── scheduler.py        Trading + aprendizaje diario en un proceso
-├── data/               Proveedores, caché incremental, limpieza
-├── features/           99 indicadores, ingeniería, triple barrera
+├── data/               Proveedores (MT5, yfinance, CCXT, CSV), caché incremental
+├── features/           114 features: indicadores, SMC, tendencia, etiquetado
 ├── strategies/         Genoma, operadores genéticos, arquetipos semilla
 ├── backtest/           Motor, costes, métricas, walk-forward, Monte Carlo
 ├── evolution/          Fitness, motor genético, refinamiento Optuna
@@ -307,6 +429,7 @@ goldbot/
 ├── execution/          Broker base, papel, CCXT, MetaTrader 5
 ├── live/               Bucle de trading en vivo
 ├── autonomy/           Puerta de estabilidad, registro campeón, orquestador
+├── notifications/      Bot de Telegram (avisos + control remoto)
 └── storage/            Persistencia SQLite
 ```
 
@@ -363,6 +486,7 @@ goldbot schedule                         # todo junto
 | Datos históricos | yfinance, CCXT, CSV (MT5) |
 | Backtesting | Motor vectorizado propio (~80 ms/backtest) |
 | Machine Learning | scikit-learn (PyTorch opcional) |
+| Notificaciones | API HTTP de Telegram (sin dependencias extra) |
 | Optimización | Algoritmo genético propio + Optuna |
 | Ejecución en vivo | CCXT, MetaTrader 5, broker de papel |
 | Infraestructura | Docker / systemd en VPS |

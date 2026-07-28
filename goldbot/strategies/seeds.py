@@ -166,6 +166,125 @@ def _hurst_regime(catalog: FeatureCatalog) -> StrategyGenome | None:
     )
 
 
+
+# --------------------------------------------------------------------------- #
+# Arquetipos Smart Money Concepts
+# --------------------------------------------------------------------------- #
+def _liquidity_sweep_reversal(catalog: FeatureCatalog) -> StrategyGenome | None:
+    """Toma de liquidez: barrido de stops y giro.
+
+    El patron que mas se repite en intradia. El precio perfora un minimo previo
+    donde se acumulan stops, los ejecuta y se da la vuelta. Entrar despues del
+    barrido -- no durante -- es lo que separa aprovecharlo de ser la liquidez.
+
+    El veto de tendencia sigue aplicandose por encima: solo se compran barridos
+    bajistas cuando la tendencia mayor es alcista.
+    """
+    if not _requires(catalog, "smc_sweep_bull", "smc_sweep_bear"):
+        return None
+    return StrategyGenome(
+        long_rules=RuleSet([_cond("smc_sweep_bull", "gt", 0.5)], "and"),
+        short_rules=RuleSet([_cond("smc_sweep_bear", "gt", 0.5)], "and"),
+        regime_filter=RuleSet(),
+        exit_rules=ExitRules(stop_atr=1.5, target_atr=3.0, breakeven_atr=1.0, max_bars=72),
+        metadata={"archetype": "barrido_liquidez"},
+    )
+
+
+def _order_block_retest(catalog: FeatureCatalog) -> StrategyGenome | None:
+    """Retesteo de order block tras romper estructura.
+
+    Se rompe la estructura al alza (BOS), el precio retrocede a la zona de la
+    ultima vela bajista antes del impulso y se compra ahi. Es la entrada SMC
+    clasica y tiene la virtud de dar un stop muy definido.
+    """
+    if not _requires(catalog, "smc_in_bull_ob", "smc_in_bear_ob", "smc_structure"):
+        return None
+    return StrategyGenome(
+        long_rules=RuleSet(
+            [_cond("smc_in_bull_ob", "gt", 0.5), _cond("smc_structure", "gt", 0.0)], "and"
+        ),
+        short_rules=RuleSet(
+            [_cond("smc_in_bear_ob", "gt", 0.5), _cond("smc_structure", "lt", 0.0)], "and"
+        ),
+        regime_filter=RuleSet(),
+        exit_rules=ExitRules(stop_atr=1.8, target_atr=3.6, trail_atr=2.0, max_bars=120),
+        metadata={"archetype": "order_block"},
+    )
+
+
+def _fvg_fill(catalog: FeatureCatalog) -> StrategyGenome | None:
+    """Relleno de desequilibrio (Fair Value Gap) a favor de la estructura."""
+    if not _requires(catalog, "smc_in_bull_fvg", "smc_in_bear_fvg", "smc_structure"):
+        return None
+    return StrategyGenome(
+        long_rules=RuleSet(
+            [_cond("smc_in_bull_fvg", "gt", 0.5), _cond("smc_structure", "gt", 0.0)], "and"
+        ),
+        short_rules=RuleSet(
+            [_cond("smc_in_bear_fvg", "gt", 0.5), _cond("smc_structure", "lt", 0.0)], "and"
+        ),
+        regime_filter=RuleSet(),
+        exit_rules=ExitRules(stop_atr=1.6, target_atr=2.4, max_bars=60, exit_on_reverse=False),
+        metadata={"archetype": "fvg"},
+    )
+
+
+def _bos_continuation(catalog: FeatureCatalog) -> StrategyGenome | None:
+    """Continuacion tras ruptura de estructura con desplazamiento."""
+    if not _requires(catalog, "smc_bos_recent", "smc_structure", "smc_displacement"):
+        return None
+    return StrategyGenome(
+        long_rules=RuleSet(
+            [_cond("smc_bos_recent", "gt", 0.5), _cond("smc_structure", "gt", 0.0)], "and"
+        ),
+        short_rules=RuleSet(
+            [_cond("smc_bos_recent", "gt", 0.5), _cond("smc_structure", "lt", 0.0)], "and"
+        ),
+        regime_filter=RuleSet([_cond("smc_displacement", "gt", 1.2)], "and"),
+        exit_rules=ExitRules(stop_atr=2.0, target_atr=4.0, trail_atr=2.0, max_bars=144),
+        metadata={"archetype": "bos_continuacion"},
+    )
+
+
+def _discount_premium(catalog: FeatureCatalog) -> StrategyGenome | None:
+    """Comprar en descuento y vender en premium, dentro del rango operativo."""
+    if not _requires(catalog, "smc_premium", "smc_structure"):
+        return None
+    return StrategyGenome(
+        long_rules=RuleSet(
+            [_cond("smc_premium", "lt", 0.35), _cond("smc_structure", "gt", 0.0)], "and"
+        ),
+        short_rules=RuleSet(
+            [_cond("smc_premium", "gt", 0.65), _cond("smc_structure", "lt", 0.0)], "and"
+        ),
+        regime_filter=RuleSet(),
+        exit_rules=ExitRules(stop_atr=2.0, target_atr=3.0, breakeven_atr=1.0, max_bars=96),
+        metadata={"archetype": "premium_descuento"},
+    )
+
+
+def _ema_pullback_trend(catalog: FeatureCatalog) -> StrategyGenome | None:
+    """Retroceso a la EMA en tendencia establecida.
+
+    La entrada mas conservadora del conjunto: con el filtro de tendencia activo,
+    solo compra correcciones dentro de tendencias alcistas confirmadas.
+    """
+    if not _requires(catalog, "ema_dist_50", "ema_cross_9_50", "adx_14"):
+        return None
+    return StrategyGenome(
+        long_rules=RuleSet(
+            [_cond("ema_dist_50", "lt", -0.001), _cond("ema_cross_9_50", "gt", 0.0)], "and"
+        ),
+        short_rules=RuleSet(
+            [_cond("ema_dist_50", "gt", 0.001), _cond("ema_cross_9_50", "lt", 0.0)], "and"
+        ),
+        regime_filter=RuleSet([_cond("adx_14", "gt", 20.0)], "and"),
+        exit_rules=ExitRules(stop_atr=2.0, target_atr=4.0, trail_atr=2.5, max_bars=144),
+        metadata={"archetype": "retroceso_ema"},
+    )
+
+
 ARCHETYPES: tuple[Callable[[FeatureCatalog], StrategyGenome | None], ...] = (
     _trend_following,
     _mean_reversion,
@@ -176,6 +295,13 @@ ARCHETYPES: tuple[Callable[[FeatureCatalog], StrategyGenome | None], ...] = (
     _session_bias,
     _vwap_reversion,
     _hurst_regime,
+    # --- Smart Money Concepts ---
+    _liquidity_sweep_reversal,
+    _order_block_retest,
+    _fvg_fill,
+    _bos_continuation,
+    _discount_premium,
+    _ema_pullback_trend,
 )
 
 

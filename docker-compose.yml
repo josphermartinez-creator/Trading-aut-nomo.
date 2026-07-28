@@ -26,6 +26,8 @@ services:
       GOLDBOT_API_KEY: ${GOLDBOT_API_KEY:-}
       GOLDBOT_API_SECRET: ${GOLDBOT_API_SECRET:-}
       GOLDBOT_INITIAL_BALANCE: ${GOLDBOT_INITIAL_BALANCE:-10000}
+      GOLDBOT_TELEGRAM_TOKEN: ${GOLDBOT_TELEGRAM_TOKEN:-}
+      GOLDBOT_TELEGRAM_CHAT_ID: ${GOLDBOT_TELEGRAM_CHAT_ID:-}
 
     volumes:
       # El historico y la base de datos deben sobrevivir al contenedor:

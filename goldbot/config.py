@@ -22,6 +22,10 @@ class DataConfig:
     """De donde salen las velas y como se cachean."""
 
     symbol: str = "XAUUSD"
+    # Instrumento logico. Vacio = se deduce de `symbol`. Determina el tamano de
+    # contrato, los costes tipicos y el rango de precios valido.
+    # Soportados: XAUUSD (oro) y EURUSD.
+    instrument: str = ""
     timeframe: str = "5m"
     timeframe_minutes: int = 5
     # Orden de preferencia de proveedores; el primero que devuelva datos gana.
@@ -35,6 +39,14 @@ class DataConfig:
     history_days: int = 720                # historico objetivo para entrenar
     min_bars_required: int = 5_000         # por debajo de esto no se entrena
     max_gap_minutes: int = 120             # hueco maximo tolerado sin marcar sesion rota
+
+    # --- arranque desde MT5 ---
+    # Al conectar con el broker (XM, Vantage...) lo primero es volcar este
+    # numero de velas reales del instrumento que se va a operar. Son mejores
+    # que cualquier proxy: mismo spread, mismo horario, mismo mercado.
+    mt5_bootstrap_bars: int = 5000
+    mt5_bootstrap_on_connect: bool = True
+    mt5_symbol: str = ""                   # vacio = autodeteccion en el broker
 
 
 @dataclass
@@ -147,6 +159,52 @@ class StabilityConfig:
 
 
 @dataclass
+class TrendConfig:
+    """Prohibicion de operar contra la tendencia.
+
+    Es una restriccion estructural, no una preferencia del genoma: se aplica
+    fuera del arbol genetico para que la evolucion no pueda desactivarla.
+    """
+
+    enabled: bool = True
+    method: str = "combined"      # ema_stack | ema_slope | structure | combined
+    fast_ema: int = 50            # ~4 horas en M5
+    mid_ema: int = 200            # ~17 horas
+    slow_ema: int = 576           # 2 dias de negociacion
+    min_slope: float = 5e-6
+    allow_flat: bool = False      # False = tampoco se opera en lateral
+    swing_left: int = 3
+    swing_right: int = 3
+
+
+@dataclass
+class SMCConfig:
+    """Smart Money Concepts: estructura, liquidez y desequilibrios."""
+
+    enabled: bool = True
+    swing_left: int = 3
+    swing_right: int = 3           # velas de confirmacion de un swing
+    equal_level_tolerance_atr: float = 0.25
+    sweep_min_penetration: float = 0.0
+
+
+@dataclass
+class TelegramConfig:
+    """Avisos y control remoto.
+
+    El token NUNCA va en el YAML: se lee de GOLDBOT_TELEGRAM_TOKEN.
+    """
+
+    enabled: bool = False
+    chat_id: str = ""
+    notify_trades: bool = True
+    notify_daily_report: bool = True
+    notify_errors: bool = True
+    allow_remote_control: bool = True   # permite /pausar, /cerrartodo, /parar
+    poll_interval_seconds: float = 3.0
+
+
+@dataclass
 class ExecutionConfig:
     """Conexion con el broker."""
 
@@ -189,6 +247,9 @@ class Config:
     ml: MLConfig = field(default_factory=MLConfig)
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
     stability: StabilityConfig = field(default_factory=StabilityConfig)
+    trend: TrendConfig = field(default_factory=TrendConfig)
+    smc: SMCConfig = field(default_factory=SMCConfig)
+    telegram: TelegramConfig = field(default_factory=TelegramConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     autonomy: AutonomyConfig = field(default_factory=AutonomyConfig)
 
@@ -219,6 +280,55 @@ class Config:
     def mt5_server(self) -> str | None:
         return os.getenv("GOLDBOT_MT5_SERVER")
 
+    @property
+    def telegram_token(self) -> str | None:
+        return os.getenv("GOLDBOT_TELEGRAM_TOKEN")
+
+    @property
+    def telegram_chat_id(self) -> str | None:
+        return os.getenv("GOLDBOT_TELEGRAM_CHAT_ID") or (self.telegram.chat_id or None)
+
+    # --- instrumento ---
+    @property
+    def instrument(self):
+        """Especificacion del instrumento que se esta operando."""
+        from goldbot.instruments import get_instrument
+
+        return get_instrument(self.data.instrument or self.data.symbol)
+
+    def apply_instrument_defaults(self) -> None:
+        """Ajusta los costes al instrumento configurado.
+
+        El tamano de contrato NO es una preferencia del usuario: es un hecho del
+        mercado (100 onzas en oro, 100.000 unidades en divisas). Se impone
+        siempre, porque un valor equivocado no da error -- simplemente
+        dimensiona todas las posiciones mil veces mas grandes de lo previsto.
+
+        El spread y las comisiones si son del broker, asi que solo se rellenan
+        cuando el usuario no los ha tocado (siguen en los valores de oro y el
+        instrumento es otro).
+        """
+        spec = self.instrument
+        self.costs.contract_size = spec.contract_size
+
+        from goldbot.instruments import XAUUSD
+
+        if spec.name == XAUUSD.name:
+            return
+
+        # Los valores por defecto del dataclass son los del oro; si siguen
+        # intactos, es que este YAML no se escribio para este instrumento.
+        if self.costs.spread_points == XAUUSD.spread_points:
+            self.costs.spread_points = spec.spread_points
+        if self.costs.slippage_points == XAUUSD.slippage_points:
+            self.costs.slippage_points = spec.slippage_points
+        if self.costs.commission_per_lot == XAUUSD.commission_per_lot:
+            self.costs.commission_per_lot = spec.commission_per_lot
+        if self.costs.swap_long == XAUUSD.swap_long:
+            self.costs.swap_long = spec.swap_long
+        if self.costs.swap_short == XAUUSD.swap_short:
+            self.costs.swap_short = spec.swap_short
+
     # --- serializacion ---
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -243,6 +353,7 @@ class Config:
                 raw = yaml.safe_load(fh) or {}
         cfg = cls.from_dict(raw)
         cfg._apply_env_overrides()
+        cfg.apply_instrument_defaults()
         cfg.validate()
         return cfg
 
@@ -283,6 +394,21 @@ class Config:
             raise ValueError("backtest.train_ratio debe estar en (0, 1)")
         if self.execution.mode not in {"paper", "ccxt", "mt5"}:
             raise ValueError(f"Modo de ejecucion desconocido: {self.execution.mode}")
+
+        # Coherencia instrumento/contrato. Es la comprobacion mas importante
+        # de todas: con el contrato equivocado el bot no falla, simplemente
+        # opera con un tamano mil veces mayor del previsto.
+        spec = self.instrument
+        if abs(self.costs.contract_size - spec.contract_size) > 1e-9:
+            raise ValueError(
+                f"costs.contract_size={self.costs.contract_size} no corresponde a "
+                f"{spec.name} (deberia ser {spec.contract_size}). Corrige el YAML o "
+                f"deja que apply_instrument_defaults() lo ajuste."
+            )
+        if self.costs.spread_points >= spec.price_max * 0.01:
+            raise ValueError(
+                f"spread_points={self.costs.spread_points} es absurdo para {spec.name}"
+            )
         if self.execution.mode != "paper" and self.execution.dry_run is False:
             # No es un error, pero merece quedar registrado de forma explicita.
             os.environ.setdefault("GOLDBOT_LIVE_ACK", "0")
@@ -315,6 +441,9 @@ def _build(cls: type, raw: dict[str, Any]) -> Any:
         "ml": MLConfig,
         "backtest": BacktestConfig,
         "stability": StabilityConfig,
+        "trend": TrendConfig,
+        "smc": SMCConfig,
+        "telegram": TelegramConfig,
         "execution": ExecutionConfig,
         "autonomy": AutonomyConfig,
     }

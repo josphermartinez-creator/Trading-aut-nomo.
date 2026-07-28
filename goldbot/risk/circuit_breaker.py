@@ -183,6 +183,19 @@ class CircuitBreaker:
             self.trip("precio_invalido", f"precio={price}", cooldown_minutes=10)
             return False
 
+        # El precio debe caer en el rango del instrumento. Si el oro cotiza a
+        # 1.08 o el euro a 2000, el simbolo se resolvio mal y estamos mirando
+        # otro mercado: operar asi es la forma mas rapida de perderlo todo.
+        spec = self.config.instrument
+        if not spec.is_plausible_price(price):
+            self.trip(
+                "instrumento_incorrecto",
+                f"{price:g} esta fuera del rango de {spec.name} "
+                f"({spec.price_min:g}-{spec.price_max:g})",
+                cooldown_minutes=60,
+            )
+            return False
+
         if previous_price and previous_price > 0:
             jump = abs(price - previous_price) / previous_price
             if jump > self.max_price_jump_pct:
