@@ -46,6 +46,10 @@ Arranca en `dry_run: true`. Déjalo así durante semanas.
 
 ## Instalación
 
+> **Guía paso a paso completa:** [`docs/INSTALACION.md`](docs/INSTALACION.md)
+> — cubre Windows + MT5 (XM/Vantage), VPS Linux, Docker, Telegram y el paso
+> a dinero real.
+
 ```bash
 git clone https://github.com/josphermartinez-creator/Trading-aut-nomo.git
 cd Trading-aut-nomo
